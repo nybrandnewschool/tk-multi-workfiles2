@@ -71,15 +71,9 @@ class NewFileAction(Action):
                 )
             except TankError as e:
                 # log the original exception (useful for tracking down the problem)
-                self._app.log_exception(
-                    "Unable to resolve template fields after folder creation!"
-                )
-                # and raise a new, clearer exception for this specific use case:
-                raise TankError(
-                    "Unable to resolve template fields after folder creation!  This could mean "
-                    "there is a mismatch between your folder schema and templates.  Please email "
-                    "support@shotgunsoftware.com if you need help fixing this."
-                )
+                self._app.log_exception("%s" % e)
+                # and raise it for the user
+                raise TankError("%s" % e)
 
             # reset the current scene:
             if not reset_current_scene(
