@@ -178,7 +178,7 @@ def open_file(app, action, context, path, version, read_only):
         result_types=(bool, type(None)),
     )
 
-    # save_as operation was successful - create an EventLogEntry
+    # open operation was successful - create an EventLogEntry
     event_meta = get_work_file_info(path)
     event_meta.update(app_metrics=app.get_metrics_properties())
     event_data = {
