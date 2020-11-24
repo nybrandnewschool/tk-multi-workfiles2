@@ -9,6 +9,7 @@
 # not expressly granted therein are reserved by Shotgun Software Inc.
 
 import types
+import os
 from sgtk import TankError
 from tank_vendor import six
 from sgtk.platform.qt import QtGui, QtCore
@@ -124,12 +125,31 @@ def save_file(app, action, context, path=None):
     """
     Use hook to save the current file
     """
-    if path != None:
+    if path is not None:
         app.log_debug("Saving the current file as '%s' with hook" % path)
         _do_scene_operation(app, action, context, "save_as", path)
     else:
         app.log_debug("Saving the current file with hook")
         _do_scene_operation(app, action, context, "save")
+
+        # Get newly saved path to pass to Bns_Work_File_Save event
+        path = get_current_path(app, action, context)
+
+    # save_as operation was successful - create an EventLogEntry
+    event_meta = get_work_file_info(path)
+    event_meta.update(app_metrics=app.get_metrics_properties())
+    event_data = {
+        'event_type': 'Bns_Work_File_Save',
+        'description': '%s saved a work file %s.' % (
+            context.user.get('name', 'User'),
+            event_meta['basename'],
+        ),
+        'project': context.project,
+        'entity': context.task or context.entity,
+        'user': context.user,
+        'meta': event_meta,
+    }
+    app.shotgun.create('EventLogEntry', event_data)
 
 
 def open_file(app, action, context, path, version, read_only):
@@ -138,7 +158,7 @@ def open_file(app, action, context, path, version, read_only):
     """
     # do open:
     app.log_debug("Opening file '%s' via hook" % path)
-    return _do_scene_operation(
+    result = _do_scene_operation(
         app,
         action,
         context,
@@ -148,3 +168,41 @@ def open_file(app, action, context, path, version, read_only):
         read_only,
         result_types=(bool, type(None)),
     )
+
+    # save_as operation was successful - create an EventLogEntry
+    event_meta = get_work_file_info(path)
+    event_meta.update(app_metrics=app.get_metrics_properties())
+    event_data = {
+        'event_type': 'Bns_Work_File_Open',
+        'description': '%s opened a work file %s.' % (
+            context.user.get('name', 'User'),
+            event_meta['basename'],
+        ),
+        'project': context.project,
+        'entity': context.task or context.entity,
+        'user': context.user,
+        'meta': event_meta,
+    }
+    app.shotgun.create('EventLogEntry', event_data)
+
+    return result
+
+
+def get_work_file_info(file):
+    """
+    Get some data from a filepath.
+    """
+
+    import re
+    versions = re.findall(r'v\d+', file)
+    if versions:
+        version = versions[-1]
+    else:
+        version = ''
+
+    return {
+        'basename': os.path.basename(file),
+        'dirname': os.path.dirname(file),
+        'version': version,
+        'is_first_version': version in ('v1', 'v01', 'v001'),
+    }
