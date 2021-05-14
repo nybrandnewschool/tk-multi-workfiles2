@@ -10,6 +10,7 @@
 
 import types
 import os
+import json
 from sgtk import TankError
 from tank_vendor import six
 from sgtk.platform.qt import QtGui, QtCore
@@ -136,6 +137,7 @@ def save_file(app, action, context, path=None):
         path = get_current_path(app, action, context)
 
     # save_as operation was successful - create an EventLogEntry
+    app.log_debug("Creating EventLogEntry: Bns_Work_File_Save...")
     event_meta = get_work_file_info(path)
     event_meta.update(app_metrics=app.get_metrics_properties())
     event_data = {
@@ -149,6 +151,7 @@ def save_file(app, action, context, path=None):
         'user': context.user,
         'meta': event_meta,
     }
+    app.log_debug(json.dumps(event_data))
     app.shotgun.create('EventLogEntry', event_data)
 
 
@@ -170,6 +173,7 @@ def open_file(app, action, context, path, version, read_only):
     )
 
     # open operation was successful - create an EventLogEntry
+    app.log_debug("Creating EventLogEntry Bns_Work_File_Open...")
     event_meta = get_work_file_info(path)
     event_meta.update(app_metrics=app.get_metrics_properties())
     event_data = {
@@ -183,6 +187,7 @@ def open_file(app, action, context, path, version, read_only):
         'user': context.user,
         'meta': event_meta,
     }
+    app.log_debug(json.dumps(event_data))
     app.shotgun.create('EventLogEntry', event_data)
 
     return result
