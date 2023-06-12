@@ -8,16 +8,23 @@
 # agreement to the Shotgun Pipeline Toolkit Source Code License. All rights
 # not expressly granted therein are reserved by Shotgun Software Inc.
 
-import types
-import os
 import json
-from sgtk import TankError
-from tank_vendor import six
-from sgtk.platform.qt import QtGui, QtCore
+import os
+import types
 
-OPEN_FILE_ACTION, SAVE_FILE_AS_ACTION, NEW_FILE_ACTION, VERSION_UP_FILE_ACTION = range(
-    4
-)
+from sgtk import TankError
+from sgtk.platform.qt import QtCore, QtGui
+from tank_vendor import six
+
+from .framework_qtwidgets import MessageBox
+
+(
+    OPEN_FILE_ACTION,
+    SAVE_FILE_AS_ACTION,
+    NEW_FILE_ACTION,
+    VERSION_UP_FILE_ACTION,
+    CHECK_REFERENCES_ACTION,
+) = range(5)
 
 
 def _do_scene_operation(
@@ -54,6 +61,8 @@ def _do_scene_operation(
         action_str = "new_file"
     elif action == VERSION_UP_FILE_ACTION:
         action_str = "version_up"
+    elif action == CHECK_REFERENCES_ACTION:
+        action_str = "check_references"
     else:
         raise TankError("Unrecognised action %s for scene operation" % action)
 
@@ -141,18 +150,19 @@ def save_file(app, action, context, path=None):
     event_meta = get_work_file_info(path)
     event_meta.update(app_metrics=app.get_metrics_properties())
     event_data = {
-        'event_type': 'Bns_Work_File_Save',
-        'description': '%s saved a work file %s.' % (
-            context.user.get('name', 'User'),
-            event_meta['basename'],
+        "event_type": "Bns_Work_File_Save",
+        "description": "%s saved a work file %s."
+        % (
+            context.user.get("name", "User"),
+            event_meta["basename"],
         ),
-        'project': context.project,
-        'entity': context.task or context.entity,
-        'user': context.user,
-        'meta': event_meta,
+        "project": context.project,
+        "entity": context.task or context.entity,
+        "user": context.user,
+        "meta": event_meta,
     }
     app.log_debug(json.dumps(event_data))
-    app.shotgun.create('EventLogEntry', event_data)
+    app.shotgun.create("EventLogEntry", event_data)
 
 
 def open_file(app, action, context, path, version, read_only):
@@ -177,18 +187,19 @@ def open_file(app, action, context, path, version, read_only):
     event_meta = get_work_file_info(path)
     event_meta.update(app_metrics=app.get_metrics_properties())
     event_data = {
-        'event_type': 'Bns_Work_File_Open',
-        'description': '%s opened a work file %s.' % (
-            context.user.get('name', 'User'),
-            event_meta['basename'],
+        "event_type": "Bns_Work_File_Open",
+        "description": "%s opened a work file %s."
+        % (
+            context.user.get("name", "User"),
+            event_meta["basename"],
         ),
-        'project': context.project,
-        'entity': context.task or context.entity,
-        'user': context.user,
-        'meta': event_meta,
+        "project": context.project,
+        "entity": context.task or context.entity,
+        "user": context.user,
+        "meta": event_meta,
     }
     app.log_debug(json.dumps(event_data))
-    app.shotgun.create('EventLogEntry', event_data)
+    app.shotgun.create("EventLogEntry", event_data)
 
     return result
 
@@ -199,15 +210,110 @@ def get_work_file_info(file):
     """
 
     import re
-    versions = re.findall(r'v\d+', file)
+
+    versions = re.findall(r"v\d+", file)
     if versions:
         version = versions[-1]
     else:
-        version = ''
+        version = ""
 
     return {
-        'basename': os.path.basename(file),
-        'dirname': os.path.dirname(file),
-        'version': version,
-        'is_first_version': version in ('v1', 'v01', 'v001'),
+        "basename": os.path.basename(file),
+        "dirname": os.path.dirname(file),
+        "version": version,
+        "is_first_version": version in ("v1", "v01", "v001"),
     }
+
+
+def check_references(app, action, context, parent_ui):
+    """
+    Use hook to check that all references in the current file exist.
+
+    If the hook did not check for references (returned None), then a default operation to
+    check for references will be performed using the Scene Breakdown2 API (if it is
+    available via the engine apps).
+
+    :return: The list of references that are not up to date with the latest version. None is
+        returned if the references could not be checked.
+    :rtype: list | None
+    """
+
+    app.log_debug("Checking references in the current file with hook")
+
+    # First check if there is a custom hook to check references
+    result = _do_scene_operation(
+        app,
+        action,
+        context,
+        "check_references",
+        result_types=(list, bool, type(None)),
+    )
+
+    # Return the result, if the custom hook returned a value of type list, otherwise
+    # assume that the default reference check should be performed.
+    if isinstance(result, list):
+        return result
+
+    # Set the cursor to waiting while references are being checked
+    QtGui.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+
+    try:
+        # No result returned, get the breakdown app to perform the default operation to check
+        # references
+        breakdown2_app = app.engine.apps.get("tk-multi-breakdown2")
+        if not breakdown2_app:
+            return None
+
+        # Use the breakdown manager to get the file references, then check if any are out of date
+        manager = breakdown2_app.create_breakdown_manager()
+        file_items = manager.scan_scene()
+        result = []
+        for file_item in file_items:
+            manager.get_latest_published_file(file_item)
+            if (
+                not file_item.highest_version_number
+                or file_item.sg_data["version_number"]
+                < file_item.highest_version_number
+            ):
+                result.append(file_item)
+
+        if result:
+            # Out of date references were found, prompt the user how to handle them
+            msg_box = MessageBox()
+            msg_box.setWindowTitle("Reference Check")
+            msg_box.set_text("Found out of date references in current scene.")
+            msg_box.set_detailed_text(
+                "\n".join(
+                    [
+                        (fi.sg_data.get("name") if fi.sg_data else fi.path) or fi.path
+                        for fi in result
+                    ]
+                )
+            )
+            msg_box.set_always_show_details(True)
+            open_button = msg_box.add_button(
+                "Open in Breakdown", MessageBox.ACCEPT_ROLE
+            )
+            ignore_button = msg_box.add_button("Ignore", MessageBox.REJECT_ROLE)
+            update_all_button = msg_box.add_button("Update All", MessageBox.APPLY_ROLE)
+            msg_box.set_default_button(update_all_button)
+
+            # Restore the cursor temporarily while user interacts with the dialog
+            QtGui.QApplication.restoreOverrideCursor()
+            try:
+                msg_box.exec_()
+            finally:
+                QtGui.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+
+            if msg_box.button_clicked == update_all_button:
+                # Update all references to the latest version
+                for file_item in result:
+                    manager.update_to_latest_version(file_item)
+            elif msg_box.button_clicked == open_button:
+                # Open the breakdown app to see the out of date references in more details, where
+                # the user can manually fix any, if desired
+                breakdown2_app.show_dialog()
+    finally:
+        QtGui.QApplication.restoreOverrideCursor()
+
+    return result
